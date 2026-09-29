@@ -1,0 +1,415 @@
+# Validate a Fenestra release tag: the tag and version contract, the Python
+# and frontend source checks, and the x64 installer built, installed,
+# smoke-tested, and uninstalled on a hosted Windows runner.
+#
+# Version-tag pushes are the only trigger. Run the local checks in
+# docs/releasing.md before pushing a tag.
+name: CI
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+# Never cancel validation for a release tag.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Release tag and source contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the exact tagged revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Refuse the wrong source or tag identity
+        run: |
+          set -euo pipefail
+          version="$(sed -nE 's/^APP_VERSION = "([^"]+)"$/\1/p' fenestra/app/config.py)"
+          readonly version
+          test -n "${version}"
+          test "$(jq -r .version frontend/package.json)" = "${version}"
+          test "$(jq -r .version frontend/package-lock.json)" = "${version}"
+          test "$(jq -r '.packages[""].version' frontend/package-lock.json)" = "${version}"
+          grep -q 'dynamic = \["version"\]' pyproject.toml
+          test "${GITHUB_REF_TYPE}" = "tag"
+          test "${GITHUB_REF_NAME}" = "v${version}"
+          test "$(git cat-file -t "refs/tags/${GITHUB_REF_NAME}")" = "tag"
+          test "$(git rev-parse "${GITHUB_REF_NAME}^{}")" = "${GITHUB_SHA}"
+          test "$(git rev-parse refs/remotes/origin/main)" = "${GITHUB_SHA}"
+          if test "${version}" = "0.0.1"; then
+            test "$(git rev-list --count "${GITHUB_SHA}")" = "1"
+            test "$(git show -s --format=%s "${GITHUB_SHA}")" = "chore(repo): initial commit"
+            test -z "$(git show -s --format=%b "${GITHUB_SHA}")"
+          fi
+
+      - name: Refuse former application names
+        run: |
+          set -euo pipefail
+          if git grep -nIiE 'virelo|windows toolbox' -- . ':!.github/workflows/quality-gates.yml'; then
+            echo "A former application name remains."
+            exit 1
+          fi
+
+      - name: Check the build scripts' syntax and named arguments
+        shell: pwsh
+        run: ./scripts/check-powershell.ps1
+
+  python:
+    name: Python lint and tests
+    needs: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out the exact tagged revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            pyproject.toml
+            requirements/build-constraints.txt
+
+      - name: Install the constrained test environment
+        run: |
+          python -m pip install --constraint requirements/build-constraints.txt --editable ".[dev]"
+          python -m pip check
+
+      - name: Check formatting and lint
+        run: |
+          python -m ruff format --check .
+          python -m ruff check .
+
+      - name: Run the tests that need no Windows runtime
+        run: python -m pytest -q --cov=fenestra --cov-branch --cov-report=term-missing
+
+  frontend:
+    name: Frontend lint, tests, build, and visual check
+    needs: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Check out the exact tagged revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Audit the complete and shipped dependency trees
+        run: |
+          npm audit --audit-level=low
+          npm audit --omit=dev --audit-level=low
+
+      - name: Check formatting and lint
+        run: |
+          npm run format:check
+          npm run format:docs
+          npm run lint
+
+      - name: Run the tests and build
+        run: |
+          npm test
+          npm run build
+
+      - name: Install Chromium for the visual check
+        run: npx playwright install --with-deps chromium
+
+      # The check asserts rendered geometry and axe-core results only. It never
+      # compares pixels, because fonts rasterize differently on each host.
+      - name: Check rendered geometry and accessibility
+        run: npm run visual:check
+
+      - name: Upload the visual check captures
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: fenestra-visual-${{ github.ref_name }}
+          if-no-files-found: error
+          path: build/visual/
+
+  windows:
+    name: Windows x64 installer
+    needs: [python, frontend]
+    runs-on: windows-2025
+    timeout-minutes: 90
+    env:
+      FENESTRA_TARGET_ARCHITECTURE: x64
+    steps:
+      - name: Check out the exact tagged revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up x64 Python 3.13
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.13"
+          architecture: x64
+          cache: pip
+          cache-dependency-path: |
+            pyproject.toml
+            requirements/build-constraints.txt
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install the pinned official Inno Setup compiler
+        shell: pwsh
+        run: |
+          function Wait-CiProcess($Process, [int] $TimeoutSeconds, [string] $Description) {
+            if (-not $Process.WaitForExit($TimeoutSeconds * 1000)) {
+              Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
+              throw "$Description timed out after $TimeoutSeconds seconds."
+            }
+            $Process.Refresh()
+          }
+          $version = "6.7.3"
+          $expectedSha256 = "9c73c3bae7ed48d44112a0f48e66742c00090bdb5bef71d9d3c056c66e97b732"
+          $download = Join-Path $env:RUNNER_TEMP "innosetup-$version.exe"
+          $installDirectory = Join-Path $env:RUNNER_TEMP "Inno Setup $version"
+          $url = "https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-$version.exe"
+          Invoke-WebRequest -Uri $url -OutFile $download
+          $actualSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $download).Hash.ToLowerInvariant()
+          if ($actualSha256 -ne $expectedSha256) {
+            throw "The official Inno Setup installer hash is $actualSha256; expected $expectedSha256."
+          }
+          $install = Start-Process -FilePath $download -ArgumentList @(
+            "/VERYSILENT",
+            "/SUPPRESSMSGBOXES",
+            "/NORESTART",
+            ('/DIR="{0}"' -f $installDirectory)
+          ) -PassThru
+          Wait-CiProcess $install 300 "The pinned Inno Setup installer"
+          if ($install.ExitCode -ne 0) {
+            throw "The pinned Inno Setup installer failed with exit code $($install.ExitCode)."
+          }
+          $iscc = Join-Path $installDirectory "ISCC.exe"
+          if (-not (Test-Path -LiteralPath $iscc -PathType Leaf)) {
+            throw "The pinned Inno Setup compiler was not installed at $iscc."
+          }
+          # ISCC.exe does not expose a usable PE version. build-installer.ps1
+          # actively probes the compiler engine before packaging.
+          "ISCC_PATH=$iscc" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "Installed the pinned Inno Setup compiler at $iscc."
+      - name: Report native operating-system and process architectures
+        shell: pwsh
+        run: |
+          Write-Host "Windows: $([Environment]::OSVersion.VersionString)."
+          Write-Host "OS architecture: $([Runtime.InteropServices.RuntimeInformation]::OSArchitecture)."
+          Write-Host "PowerShell process architecture: $([Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture)."
+          python -c "import os, platform, struct, sys; print('sys.executable:', sys.executable); print('sys.version:', sys.version); print('platform.machine():', platform.machine()); print('pointer_bits:', struct.calcsize('P') * 8); print('CONDA_PREFIX:', os.environ.get('CONDA_PREFIX'))"
+          if ($LASTEXITCODE -ne 0) { throw "Python architecture diagnostics failed." }
+          node -p "JSON.stringify({execPath: process.execPath, arch: process.arch, platform: process.platform, version: process.version})"
+          if ($LASTEXITCODE -ne 0) { throw "Node architecture diagnostics failed." }
+      - name: Bootstrap the architecture-qualified environment
+        shell: pwsh
+        run: |
+          $python = (Get-Command python).Source
+          $node = (Get-Command node).Source
+          .\scripts\bootstrap.ps1 -PythonExecutable $python -NodeExecutable $node
+      - name: Run isolated Qt and Windows ABI import preflights
+        shell: pwsh
+        run: |
+          $python = ".venv-$env:FENESTRA_TARGET_ARCHITECTURE\Scripts\python.exe"
+          & $python -I -c "from PySide6 import QtCore, QtWidgets, QtWebEngineCore, QtWebEngineWidgets; print(QtCore.qVersion())"
+          if ($LASTEXITCODE -ne 0) { throw "The isolated PySide6 import preflight failed." }
+          & $python -I -c "import win32api, win32gui, win32event, pythoncom, pywintypes, comtypes"
+          if ($LASTEXITCODE -ne 0) { throw "The isolated Windows ABI import preflight failed." }
+      - name: Run the complete Windows test suite
+        shell: pwsh
+        run: |
+          $python = ".venv-$env:FENESTRA_TARGET_ARCHITECTURE\Scripts\python.exe"
+          & $python -m pytest -q
+          if ($LASTEXITCODE -ne 0) { throw "Windows tests failed." }
+      - name: Build and verify the application and installer
+        shell: pwsh
+        run: |
+          $python = (Get-Command python).Source
+          $node = (Get-Command node).Source
+          .\scripts\build-installer.ps1 -PythonExecutable $python -NodeExecutable $node
+      - name: Install, smoke-test, and uninstall the target payload
+        shell: pwsh
+        run: |
+          function Wait-CiProcess($Process, [int] $TimeoutSeconds, [string] $Description) {
+            if (-not $Process.WaitForExit($TimeoutSeconds * 1000)) {
+              Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
+              throw "$Description timed out after $TimeoutSeconds seconds."
+            }
+            $Process.Refresh()
+          }
+          $architecture = $env:FENESTRA_TARGET_ARCHITECTURE
+          $reportDirectory = Join-Path $PWD "build\$architecture\installed"
+          New-Item -ItemType Directory -Path $reportDirectory -Force | Out-Null
+
+          $installer = @(
+            Get-ChildItem -LiteralPath "installer\dist" -Filter "FenestraSetup-*-$architecture.exe"
+          )
+          if ($installer.Count -ne 1) {
+            throw "Expected exactly one architecture-qualified $architecture installer."
+          }
+
+          $installDirectory = Join-Path $env:RUNNER_TEMP "Fenestra-$architecture-native"
+          $python = ".venv-$architecture\Scripts\python.exe"
+          $installArguments = @(
+            "/VERYSILENT",
+            "/SUPPRESSMSGBOXES",
+            "/NORESTART",
+            "/NOICONS",
+            ('/DIR="{0}"' -f $installDirectory)
+          )
+          $install = Start-Process `
+            -FilePath $installer[0].FullName `
+            -ArgumentList $installArguments `
+            -PassThru
+          Wait-CiProcess $install 300 "The $architecture installer"
+          if ($install.ExitCode -ne 0) {
+            throw "The $architecture installer failed with exit code $($install.ExitCode)."
+          }
+
+          $uninstaller = $null
+          try {
+            $uninstallerCandidates = @(
+              Get-ChildItem -LiteralPath $installDirectory -Filter "unins*.exe"
+            )
+            if ($uninstallerCandidates.Count -ne 1) {
+              throw "Expected exactly one generated Inno Setup uninstaller bootstrap."
+            }
+            $uninstaller = $uninstallerCandidates[0]
+
+            $sourceManifest = "dist\$architecture\Fenestra\.release.json"
+            $installedManifest = Join-Path $installDirectory ".release.json"
+            if (-not (Test-Path -LiteralPath $sourceManifest -PathType Leaf) -or
+                -not (Test-Path -LiteralPath $installedManifest -PathType Leaf)) {
+              throw "The verified payload manifest was not preserved by the installer."
+            }
+            $sourceManifestHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $sourceManifest).Hash
+            $installedManifestHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $installedManifest).Hash
+            if ($sourceManifestHash -ne $installedManifestHash) {
+              throw "The installed payload manifest differs from the verified source manifest."
+            }
+            $installedManifestData = Get-Content -LiteralPath $installedManifest -Raw | ConvertFrom-Json
+            if ($installedManifestData.architecture -ne $architecture) {
+              throw "The installed payload manifest is not $architecture."
+            }
+
+            $payloadPeFiles = @(
+              Get-ChildItem -LiteralPath $installDirectory -Recurse -File |
+                Where-Object {
+                  $_.Extension -in @(".exe", ".dll", ".pyd", ".node", ".ocx") -and
+                  $_.Name -notlike "unins*.exe"
+                } |
+                Select-Object -ExpandProperty FullName
+            )
+            if ($payloadPeFiles.Count -eq 0) {
+              throw "The installed $architecture payload contains no PE files."
+            }
+            & $python scripts\pe_arch.py `
+              --expected $architecture `
+              --json "$reportDirectory\installed-pe.json" `
+              @payloadPeFiles
+            if ($LASTEXITCODE -ne 0) {
+              throw "The installed $architecture PE scan failed."
+            }
+
+            & $python scripts\pe_arch.py `
+              --json "$reportDirectory\uninstaller-bootstrap-pe.json" `
+              $uninstaller.FullName
+            if ($LASTEXITCODE -ne 0) {
+              throw "The generated Inno Setup uninstaller is not a recognized PE executable."
+            }
+
+            $smokeReport = Join-Path $reportDirectory "installed-smoke.json"
+            $smoke = Start-Process `
+              -FilePath "$installDirectory\Fenestra.exe" `
+              -ArgumentList "--smoke-test", "--smoke-report", $smokeReport `
+              -PassThru
+            Wait-CiProcess $smoke 90 "The installed $architecture smoke test"
+            if ($smoke.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $smokeReport -PathType Leaf)) {
+              throw "The installed $architecture smoke test failed to produce passing evidence."
+            }
+            $smokeData = Get-Content -LiteralPath $smokeReport -Raw | ConvertFrom-Json
+            $failedChecks = @($smokeData.checks | Where-Object { -not $_.passed })
+            if ($smokeData.schemaVersion -ne 1 -or
+                $smokeData.application -ne "Fenestra" -or
+                $smokeData.version -ne $installedManifestData.version -or
+                -not $smokeData.frozen -or
+                $smokeData.processArchitecture -ne $architecture -or
+                $smokeData.pointerBits -ne 64 -or
+                $smokeData.exitCode -ne 0 -or
+                $smokeData.failed -ne 0 -or
+                $failedChecks.Count -ne 0) {
+              throw "The installed $architecture smoke report did not prove a healthy native payload."
+            }
+          }
+          finally {
+            if ($uninstaller) {
+              $uninstall = Start-Process `
+                -FilePath $uninstaller.FullName `
+                -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" `
+                -PassThru
+              Wait-CiProcess $uninstall 300 "The $architecture uninstaller"
+              if ($uninstall.ExitCode -ne 0) {
+                throw "The $architecture uninstaller failed with exit code $($uninstall.ExitCode)."
+              }
+              for ($attempt = 0; $attempt -lt 10; $attempt++) {
+                if (-not (Test-Path -LiteralPath "$installDirectory\Fenestra.exe") -and
+                    -not (Test-Path -LiteralPath "$installDirectory\_internal")) {
+                  break
+                }
+                Start-Sleep -Seconds 1
+              }
+              if ((Test-Path -LiteralPath "$installDirectory\Fenestra.exe") -or
+                  (Test-Path -LiteralPath "$installDirectory\_internal")) {
+                throw "Uninstall completed but left Fenestra application payload files behind."
+              }
+            }
+          }
+      - name: Upload the verified package and evidence
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: fenestra-windows-x64-${{ github.ref_name }}
+          if-no-files-found: error
+          include-hidden-files: true
+          path: |
+            dist/x64/Fenestra/
+            installer/dist/FenestraSetup-*-x64.exe
+            installer/dist/FenestraSetup-*-x64-manifest.txt
+            frontend/dist/
+            build/x64/**/*.json
+            build/x64/**/warn-Fenestra.txt
+            build/x64/**/xref-Fenestra.html
+            build/x64/**/Analysis-00.toc
+            build/x64/**/COLLECT-00.toc
+            build/x64/pyinstaller.log
+            build/x64/inno-setup.log
+            build/x64/pip-freeze.txt

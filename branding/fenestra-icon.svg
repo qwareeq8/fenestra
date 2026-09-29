@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Fenestra application icon. An arched window on a dark tile: the lunette
+  above the transom, and below it three panes fitted to decreasing widths
+  like autosized Explorer columns. scripts/build_branding.py renders it at
+  48 pixels and larger and removes the tile for the installer wizard panel.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="light" x1="0" y1="50" x2="0" y2="206" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F4D08C"/>
+      <stop offset="1" stop-color="#DC9640"/>
+    </linearGradient>
+  </defs>
+  <rect id="tile" width="256" height="256" rx="56" fill="#15171C"/>
+  <g fill="url(#light)">
+    <path d="M64 114 A64 64 0 0 1 192 114 Z"/>
+    <rect x="64" y="128" width="56" height="72" rx="4"/>
+    <rect x="134" y="128" width="30" height="72" rx="4"/>
+    <rect x="178" y="128" width="14" height="72" rx="4"/>
+  </g>
+</svg>

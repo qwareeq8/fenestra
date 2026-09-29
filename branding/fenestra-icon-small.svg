@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Fenestra icon for 16, 24, and 32 pixels. Every edge lies on the 16-pixel
+  grid so the transom and pane gaps stay crisp at small sizes.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16">
+  <rect id="tile" width="16" height="16" rx="3.5" fill="#15171C"/>
+  <g fill="#E8B060">
+    <path d="M3 7 A5 5 0 0 1 13 7 Z"/>
+    <rect x="3" y="8" width="5" height="6"/>
+    <rect x="9" y="8" width="2" height="6"/>
+    <rect x="12" y="8" width="1" height="6"/>
+  </g>
+</svg>

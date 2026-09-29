@@ -1,0 +1,38 @@
+# Python.
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Build outputs. The PyInstaller specification remains tracked.
+build/
+dist/
+installer/dist/
+*.spec.bak
+
+# Environments.
+.venv/
+.venv-x64/
+
+# Tool caches.
+.coverage
+.mypy_cache/
+.pytest_cache/
+.pytest-tmp/
+.ruff_cache/
+htmlcov/
+
+# Frontend.
+frontend/node_modules/
+frontend/dist/
+frontend/.fenestra-npm-ci.lock
+
+# Logs.
+*.log
+
+# Editors and operating systems.
+.idea/
+.vscode/
+*.swp
+Thumbs.db
+Desktop.ini
+.DS_Store

@@ -1,0 +1,12 @@
+# Store text as LF so formatting checks behave the same on every host. Later
+# rules override this default.
+* text=auto eol=lf
+
+# Windows batch files require CRLF for reliable cmd.exe parsing.
+*.bat text eol=crlf
+
+# Never normalize binary assets or diff them as text.
+*.bmp   binary
+*.ico   binary
+*.png   binary
+*.woff2 binary

@@ -1,0 +1,44 @@
+/* Bundled WebCM faces. Real Regular, Book, and Bold files keep Chromium from
+   synthesizing weights; see assets/fonts/README.md for the license. */
+@font-face {
+  font-family: "WebCM Sans 10";
+  src: url("./assets/fonts/WebCM Sans 10 Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "WebCM Sans 10";
+  src: url("./assets/fonts/WebCM Sans 10 Book.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "WebCM Sans 10";
+  src: url("./assets/fonts/WebCM Sans 10 Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "WebCM Serif 10";
+  src: url("./assets/fonts/WebCM Serif 10 Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "WebCM Mono 10";
+  src: url("./assets/fonts/WebCM Mono 10 Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "WebCM Mono 10";
+  src: url("./assets/fonts/WebCM Mono 10 Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}

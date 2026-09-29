@@ -1,0 +1,24 @@
+# Release builds constrain every third-party package installed by .[dev,build].
+# Keep Qt and Shiboken on one version for the verified x64 release.
+PySide6==6.11.1
+PySide6-Addons==6.11.1
+PySide6-Essentials==6.11.1
+shiboken6==6.11.1
+keyboard==0.13.5
+pywin32==312
+comtypes==1.4.16
+pyinstaller==6.21.0
+pyinstaller-hooks-contrib==2026.6
+altgraph==0.17.5
+colorama==0.4.6
+coverage==7.15.2
+iniconfig==2.3.0
+packaging==26.2
+pefile==2024.8.26
+pluggy==1.6.0
+Pygments==2.20.0
+pywin32-ctypes==0.2.3
+setuptools==83.0.0
+ruff==0.15.22
+pytest==9.1.1
+pytest-cov==7.1.0
